@@ -32,31 +32,11 @@ impl<'a> Nrf52840DefaultPeripherals<'a> {
     pub fn init(&'static self) {
         self.ieee802154_radio.set_timer_ref(&self.nrf52.timer0);
         self.nrf52.timer0.set_alarm_client(&self.ieee802154_radio);
-        self.nrf52.pwr_clk.set_usb_client(&self.usbd);
-        self.usbd.set_power_ref(&self.nrf52.pwr_clk);
         self.nrf52.init();
     }
 }
 impl<'a> kernel::platform::chip::InterruptService for Nrf52840DefaultPeripherals<'a> {
     unsafe fn service_interrupt(&self, interrupt: u32) -> bool {
-        match interrupt {
-            crate::peripheral_interrupts::USBD => self.usbd.handle_interrupt(),
-            nrf52::peripheral_interrupts::GPIOTE => self.gpio_port.handle_interrupt(),
-            nrf52::peripheral_interrupts::RADIO => {
-                match (
-                    self.ieee802154_radio.is_enabled(),
-                    self.nrf52.ble_radio.is_enabled(),
-                ) {
-                    (false, false) => (),
-                    (true, false) => self.ieee802154_radio.handle_interrupt(),
-                    (false, true) => self.nrf52.ble_radio.handle_interrupt(),
-                    (true, true) => kernel::debug!(
-                        "nRF 802.15.4 and BLE radios cannot be simultaneously enabled!"
-                    ),
-                }
-            }
-            _ => return self.nrf52.service_interrupt(interrupt),
-        }
-        true
+        self.nrf52.service_interrupt(interrupt)
     }
 }
