@@ -142,7 +142,7 @@ const USB_DEBUGGING: bool = false;
 const FAULT_RESPONSE: kernel::process::PanicFaultPolicy = kernel::process::PanicFaultPolicy {};
 
 // Number of concurrent processes this platform supports.
-const NUM_PROCS: usize = 8;
+const NUM_PROCS: usize = 0;
 
 static mut PROCESSES: [Option<&'static dyn kernel::process::Process>; NUM_PROCS] =
     [None; NUM_PROCS];
