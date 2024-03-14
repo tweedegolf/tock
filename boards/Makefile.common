@@ -417,6 +417,10 @@ stack-analysis:
 memory: $(TARGET_PATH)/release/$(PLATFORM).elf
 	$(TOCK_ROOT_DIRECTORY)tools/print_tock_memory_usage.py --objdump $(OBJDUMP) -w $(PTMU_ARGS) $<
 
+.PHONY: asm
+asm:
+	$(Q)RUSTFLAGS="$(RUSTC_FLAGS_TOCK) $(RUSTC_FLAGS_FOR_BIN)" CARGO_FLAGS="-Z build-std=core" $(CARGO) asm $(CARGO_FLAGS_TOCK) --bin $(PLATFORM) --release $(CARGO_ASM_FLAGS)
+
 # Support rules
 
 target:
