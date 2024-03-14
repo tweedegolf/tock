@@ -148,7 +148,6 @@ static mut PROCESSES: [Option<&'static dyn kernel::process::Process>; NUM_PROCS]
     [None; NUM_PROCS];
 
 static mut CHIP: Option<&'static nrf52840::chip::NRF52<Nrf52840DefaultPeripherals>> = None;
-static mut PROCESS_PRINTER: Option<&'static kernel::process::ProcessPrinterText> = None;
 
 /// Dummy buffer that causes the linker to reserve enough space for the stack.
 #[no_mangle]
@@ -323,16 +322,6 @@ pub unsafe fn start() -> (
     );
     CHIP = Some(chip);
 
-    // Do nRF configuration and setup. This is shared code with other nRF-based
-    // platforms.
-    nrf52_components::startup::NrfStartupComponent::new(
-        false,
-        BUTTON_RST_PIN,
-        nrf52840::uicr::Regulator0Output::DEFAULT,
-        &base_peripherals.nvmc,
-    )
-    .finalize(());
-
     //--------------------------------------------------------------------------
     // CAPABILITIES
     //--------------------------------------------------------------------------
@@ -447,8 +436,6 @@ pub unsafe fn start() -> (
         scheduler,
         systick: cortexm4::systick::SysTick::new_with_calibration(64000000),
     };
-
-    base_peripherals.adc.calibrate();
 
     // test::aes_test::run_aes128_ctr(&base_peripherals.ecb);
     // test::aes_test::run_aes128_cbc(&base_peripherals.ecb);
