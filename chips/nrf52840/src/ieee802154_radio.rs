@@ -684,7 +684,8 @@ enum RadioState {
 }
 
 impl<'a> Radio<'a> {
-    pub fn new(ack_buf: &'static mut [u8; ACK_BUF_SIZE]) -> Self {
+    // pub fn new(ack_buf: &'static mut [u8; ACK_BUF_SIZE]) -> Self {
+    pub const fn new() -> Self {
         Self {
             registers: RADIO_BASE,
             tx_power: Cell::new(TxPower::ZerodBm),
@@ -692,7 +693,7 @@ impl<'a> Radio<'a> {
             tx_client: OptionalCell::empty(),
             tx_buf: TakeCell::empty(),
             rx_buf: TakeCell::empty(),
-            ack_buf: TakeCell::new(ack_buf),
+            ack_buf: TakeCell::empty(),
             addr: Cell::new(0),
             addr_long: Cell::new([0x00; 8]),
             pan: Cell::new(0),

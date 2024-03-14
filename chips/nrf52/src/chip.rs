@@ -36,7 +36,7 @@ pub struct Nrf52DefaultPeripherals<'a> {
 }
 
 impl<'a> Nrf52DefaultPeripherals<'a> {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             uarte0: crate::uart::Uarte::new(crate::uart::UARTE0_BASE),
             rtc: crate::rtc::Rtc::new(),

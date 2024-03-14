@@ -13,19 +13,17 @@ use nrf52::chip::Nrf52DefaultPeripherals;
 pub struct Nrf52840DefaultPeripherals<'a> {
     pub nrf52: Nrf52DefaultPeripherals<'a>,
     pub ieee802154_radio: crate::ieee802154_radio::Radio<'a>,
-    pub usbd: crate::usbd::Usbd<'a>,
-    pub gpio_port: crate::gpio::Port<'a, { crate::gpio::NUM_PINS }>,
+    pub usbd: crate::usbd::Usbd<'static>,
+    pub gpio_port: &'static crate::gpio::Port<'static, { crate::gpio::NUM_PINS }>,
 }
 
 impl<'a> Nrf52840DefaultPeripherals<'a> {
-    pub unsafe fn new(
-        ieee802154_radio_ack_buf: &'static mut [u8; crate::ieee802154_radio::ACK_BUF_SIZE],
-    ) -> Self {
+    pub unsafe fn new() -> Self {
         Self {
             nrf52: Nrf52DefaultPeripherals::new(),
-            ieee802154_radio: crate::ieee802154_radio::Radio::new(ieee802154_radio_ack_buf),
+            ieee802154_radio: crate::ieee802154_radio::Radio::new(),
             usbd: crate::usbd::Usbd::new(),
-            gpio_port: crate::gpio::nrf52840_gpio_create(),
+            gpio_port: &crate::gpio::NRF52840_GPIO_CREATE,
         }
     }
     // Necessary for setting up circular dependencies

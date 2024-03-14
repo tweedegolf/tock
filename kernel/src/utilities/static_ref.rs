@@ -25,6 +25,8 @@ pub struct StaticRef<T> {
     ptr: NonNull<T>,
 }
 
+unsafe impl<T> Sync for StaticRef<T> {}
+
 impl<T> StaticRef<T> {
     /// Create a new `StaticRef` from a raw pointer
     ///

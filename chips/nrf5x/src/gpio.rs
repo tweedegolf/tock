@@ -8,7 +8,9 @@
 //! * Philip Levis <pal@cs.stanford.edu>
 //! * Date: August 18, 2016
 
+use core::marker::PhantomData;
 use core::ops::{Index, IndexMut};
+use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering};
 use enum_primitive::cast::FromPrimitive;
 use enum_primitive::enum_from_primitive;
 use kernel::debug;
@@ -358,10 +360,61 @@ enum_from_primitive! {
     }
 }
 
+struct Client<'a> {
+    ptr: AtomicUsize,
+    metadata: AtomicUsize,
+    _marker: PhantomData<&'a dyn hil::gpio::Client>,
+}
+
+unsafe impl Sync for Client<'_> {}
+
+impl<'a> Client<'a> {
+    pub const fn new(client: &'a dyn hil::gpio::Client) -> Self {
+        // this is just unsafe because of repr(Rust)
+        let (ptr, metadata) = unsafe { core::mem::transmute(client) };
+
+        Self {
+            ptr: AtomicUsize::new(ptr),
+            metadata: AtomicUsize::new(metadata),
+            _marker: PhantomData,
+        }
+    }
+
+    pub const fn empty() -> Self {
+        Self {
+            ptr: AtomicUsize::new(0),
+            metadata: AtomicUsize::new(0),
+            _marker: PhantomData,
+        }
+    }
+
+    pub fn set(&self, client: &'a dyn hil::gpio::Client) {
+        // this is just unsafe because of repr(Rust)
+        let (ptr, metadata) = unsafe { core::mem::transmute(client) };
+
+        self.ptr.store(ptr, Ordering::Relaxed);
+        self.ptr.store(metadata, Ordering::Relaxed);
+    }
+
+    pub fn as_client(&self) -> Option<&'a dyn hil::gpio::Client> {
+        let ptr = self.ptr.load(Ordering::Relaxed);
+        let metadata = self.metadata.load(Ordering::Relaxed);
+
+        if ptr == 0 {
+            None
+        } else {
+            // this is just unsafe because of repr(Rust)
+            let client = unsafe { core::mem::transmute((ptr, metadata)) };
+
+            Some(client)
+        }
+    }
+}
+
 pub struct GPIOPin<'a> {
     pin: u8,
     port: u8,
-    client: OptionalCell<&'a dyn hil::gpio::Client>,
+    client: Client<'a>,
     gpiote_registers: StaticRef<GpioteRegisters>,
     gpio_registers: StaticRef<GpioRegisters>,
 }
@@ -371,7 +424,7 @@ impl<'a> GPIOPin<'a> {
         GPIOPin {
             pin: ((pin as usize) % GPIO_PER_PORT) as u8,
             port: ((pin as usize) / GPIO_PER_PORT) as u8,
-            client: OptionalCell::empty(),
+            client: Client::empty(),
             gpio_registers: unsafe {
                 StaticRef::new(
                     (GPIO_BASE_ADDRESS + ((pin as usize) / GPIO_PER_PORT) * GPIO_SIZE)
@@ -553,7 +606,7 @@ impl GPIOPin<'_> {
     }
 
     fn handle_interrupt(&self) {
-        self.client.map(|client| {
+        self.client.as_client().map(|client| {
             client.fired();
         });
     }
@@ -578,7 +631,7 @@ impl<'a, const N: usize> IndexMut<Pin> for Port<'a, N> {
 }
 
 impl<'a, const N: usize> Port<'a, N> {
-    pub fn new(pins: [GPIOPin<'a>; N]) -> Self {
+    pub const fn new(pins: [GPIOPin<'a>; N]) -> Self {
         Self { pins }
     }
 

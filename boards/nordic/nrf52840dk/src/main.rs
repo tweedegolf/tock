@@ -68,6 +68,7 @@
 //! | P0.27 | P24 17 | I2C SCL  |
 
 #![no_std]
+#![feature(ptr_metadata)]
 // Disable this attribute when documenting, as a workaround for
 // https://github.com/rust-lang/rust/issues/62184.
 #![cfg_attr(not(doc), no_main)]
@@ -277,7 +278,7 @@ pub unsafe fn start() -> (
     // Initialize chip peripheral drivers
     let nrf52840_peripherals = static_init!(
         Nrf52840DefaultPeripherals,
-        Nrf52840DefaultPeripherals::new(ieee802154_ack_buf)
+        Nrf52840DefaultPeripherals::new()
     );
 
     // Set up circular peripheral dependencies.

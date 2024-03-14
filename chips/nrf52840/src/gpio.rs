@@ -6,7 +6,9 @@ pub use nrf52::gpio::{GPIOPin, Pin, Port};
 
 pub const NUM_PINS: usize = 48;
 
-pub fn nrf52840_gpio_create<'a>() -> Port<'a, NUM_PINS> {
+pub static NRF52840_GPIO_CREATE: Port<'static, NUM_PINS> = nrf52840_gpio_create();
+
+pub const fn nrf52840_gpio_create<'a>() -> Port<'a, NUM_PINS> {
     Port::new([
         GPIOPin::new(Pin::P0_00),
         GPIOPin::new(Pin::P0_01),
