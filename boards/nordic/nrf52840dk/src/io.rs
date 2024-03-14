@@ -98,17 +98,5 @@ impl IoWrite for Writer {
 #[panic_handler]
 /// Panic handler
 pub unsafe fn panic_fmt(pi: &PanicInfo) -> ! {
-    // The nRF52840DK LEDs (see back of board)
-    let led_kernel_pin = &nrf52840::gpio::GPIOPin::new(Pin::P0_13);
-    let led = &mut led::LedLow::new(led_kernel_pin);
-    let writer = &mut WRITER;
-    debug::panic(
-        &mut [led],
-        writer,
-        pi,
-        &cortexm4::support::nop,
-        &PROCESSES,
-        &CHIP,
-        &PROCESS_PRINTER,
-    )
+    loop {}
 }
