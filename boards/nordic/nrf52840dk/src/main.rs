@@ -73,11 +73,13 @@
 #![cfg_attr(not(doc), no_main)]
 #![deny(missing_docs)]
 
+use capsules_core::virtualizers::virtual_alarm::{VirtualMuxAlarm, MuxAlarm};
+use capsules_core::virtualizers::virtual_uart::UartDevice;
 use capsules_extra::net::ieee802154::MacAddress;
 use capsules_extra::net::ipv6::ip_utils::IPAddr;
 use kernel::component::Component;
 use kernel::hil::led::LedLow;
-use kernel::hil::time::Counter;
+use kernel::hil::time::{Counter, AlarmClient, Alarm};
 #[allow(unused_imports)]
 use kernel::hil::usb::Client;
 use kernel::platform::{KernelResources, SyscallDriverLookup};
@@ -86,6 +88,7 @@ use kernel::scheduler::round_robin::RoundRobinSched;
 use kernel::{capabilities, create_capability, debug, debug_gpio, debug_verbose, static_init};
 use nrf52840::gpio::Pin;
 use nrf52840::interrupt_service::Nrf52840DefaultPeripherals;
+use nrf52840::rtc::Rtc;
 use nrf52_components::{UartChannel, UartPins};
 
 #[allow(dead_code)]
@@ -195,8 +198,6 @@ type Ieee802154Driver = components::ieee802154::Ieee802154ComponentType<
 
 /// Supported drivers by the platform
 pub struct Platform {
-    console: &'static capsules_core::console::Console<'static>,
-    alarm: &'static AlarmDriver,
     scheduler: &'static RoundRobinSched<'static>,
     systick: cortexm4::systick::SysTick,
 }
@@ -207,8 +208,6 @@ impl SyscallDriverLookup for Platform {
         F: FnOnce(Option<&dyn kernel::syscall::SyscallDriver>) -> R,
     {
         match driver_num {
-            capsules_core::console::DRIVER_NUM => f(Some(self.console)),
-            capsules_core::alarm::DRIVER_NUM => f(Some(self.alarm)),
             _ => f(None),
         }
     }
@@ -340,12 +339,6 @@ pub unsafe fn start() -> (
     let _ = rtc.start();
     let mux_alarm = components::alarm::AlarmMuxComponent::new(rtc)
         .finalize(components::alarm_mux_component_static!(nrf52840::rtc::Rtc));
-    let alarm = components::alarm::AlarmDriverComponent::new(
-        board_kernel,
-        capsules_core::alarm::DRIVER_NUM,
-        mux_alarm,
-    )
-    .finalize(components::alarm_component_static!(nrf52840::rtc::Rtc));
 
     let uart_channel = nrf52_components::UartChannelComponent::new(
         uart_channel,
@@ -359,13 +352,20 @@ pub unsafe fn start() -> (
     let uart_mux = components::console::UartMuxComponent::new(uart_channel, 115200)
         .finalize(components::uart_mux_component_static!());
 
-    // Setup the serial console for userspace.
-    let console = components::console::ConsoleComponent::new(
-        board_kernel,
-        capsules_core::console::DRIVER_NUM,
-        uart_mux,
-    )
-    .finalize(components::console_component_static!());
+    let hello_uart = static_init!(UartDevice, UartDevice::new(uart_mux, false));
+    hello_uart.setup();
+
+    let hello_alarm = static_init!(VirtualMuxAlarm<Rtc<'static>>, VirtualMuxAlarm::new(mux_alarm));
+    hello_alarm.setup();
+
+    let hello_buffer = static_init!([u8; 11], [b'H', b'e', b'l', b'l', b'o', b' ', b'W', b'o' , b'r', b'l' , b'd']);
+    let hello = static_init!(hello_world::HelloWorld<'static, VirtualMuxAlarm<Rtc<'static>>, UartDevice>, hello_world::HelloWorld::new(
+	hello_alarm,
+	hello_uart,
+	hello_buffer,
+    ));
+    hello.start();
+
 
     //--------------------------------------------------------------------------
     // TESTS
@@ -431,8 +431,6 @@ pub unsafe fn start() -> (
         .finalize(components::round_robin_component_static!(NUM_PROCS));
 
     let platform = Platform {
-        console,
-        alarm,
         scheduler,
         systick: cortexm4::systick::SysTick::new_with_calibration(64000000),
     };
@@ -493,4 +491,71 @@ pub unsafe fn main() {
         None::<&kernel::ipc::IPC<{ NUM_PROCS as u8 }>>,
         &main_loop_capability,
     );
+}
+
+
+mod hello_world {
+    use core::cell::Cell;
+
+    use kernel::hil::{time::{Alarm, AlarmClient, Frequency, Ticks}, uart::{UartData, TransmitClient}};
+
+    enum State {
+	Transmitting,
+	Waiting(&'static mut [u8]),
+    }
+
+    pub struct HelloWorld<'a, A: Alarm<'a>, U: UartData<'a>> {
+	alarm: &'a A,
+	uart: &'a U,
+	state: Cell<State>,
+    }
+
+
+    impl<'a, A: Alarm<'a>, U: UartData<'a>> HelloWorld<'a, A, U> {
+	pub fn new(alarm: &'a A, uart: &'a U, buffer: &'static mut [u8]) -> Self {
+	    HelloWorld {
+		alarm,
+		uart,
+		state: Cell::new(State::Waiting(buffer)),
+	    }
+	}
+
+	pub fn start(&'a self) {
+	    self.alarm.set_alarm_client(self);
+	    self.uart.set_transmit_client(self);
+
+	    let now = self.alarm.now();
+	    let dst = now.wrapping_add(<A::Ticks>::from_or_max(<A::Frequency>::frequency() as u64));
+	    self.alarm.set_alarm(now, dst);
+	}
+    }
+
+    impl<'a, A: Alarm<'a>, U: UartData<'a>> AlarmClient for HelloWorld<'a, A, U> {
+        fn alarm(&self) {
+	    match self.state.replace(State::Transmitting) {
+		State::Transmitting => {
+		    // Shouldn't happen, but just ignore
+		},
+		State::Waiting(buffer) => {
+		    self.uart.transmit_buffer(buffer, buffer.len());
+
+		    let now = self.alarm.now();
+		    let dst = now.wrapping_add(<A::Ticks>::from_or_max(<A::Frequency>::frequency() as u64));
+		    self.alarm.set_alarm(now, dst);
+		}
+	    }
+        }
+    }
+
+    impl<'a, A: Alarm<'a>, U: UartData<'a>> TransmitClient for HelloWorld<'a, A, U> {
+        fn transmitted_buffer(
+            &self,
+            tx_buffer: &'static mut [u8],
+            tx_len: usize,
+            rval: Result<(), kernel::ErrorCode>,
+        ) {
+
+        }
+    }
+
 }
