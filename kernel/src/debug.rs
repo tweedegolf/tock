@@ -571,6 +571,7 @@ impl Write for DebugWriterWrapper {
 }
 
 pub fn debug_print(args: Arguments) {
+    return;
     let writer = unsafe { get_debug_writer() };
 
     let _ = write(writer, args);
@@ -578,6 +579,7 @@ pub fn debug_print(args: Arguments) {
 }
 
 pub fn debug_println(args: Arguments) {
+    return;
     let writer = unsafe { get_debug_writer() };
 
     let _ = write(writer, args);
@@ -586,6 +588,7 @@ pub fn debug_println(args: Arguments) {
 }
 
 pub fn debug_slice(slice: &ReadableProcessSlice) -> usize {
+    return 0;
     let writer = unsafe { get_debug_writer() };
     let mut total = 0;
     for b in slice.iter() {
@@ -602,6 +605,7 @@ pub fn debug_slice(slice: &ReadableProcessSlice) -> usize {
 }
 
 pub fn debug_available_len() -> usize {
+    return 0;
     let writer = unsafe { get_debug_writer() };
     writer.available_len()
 }
@@ -613,6 +617,7 @@ fn write_header(writer: &mut DebugWriterWrapper, (file, line): &(&'static str, u
 }
 
 pub fn debug_verbose_print(args: Arguments, file_line: &(&'static str, u32)) {
+    return;
     let writer = unsafe { get_debug_writer() };
 
     let _ = write_header(writer, file_line);
@@ -621,6 +626,7 @@ pub fn debug_verbose_print(args: Arguments, file_line: &(&'static str, u32)) {
 }
 
 pub fn debug_verbose_println(args: Arguments, file_line: &(&'static str, u32)) {
+    return;
     let writer = unsafe { get_debug_writer() };
 
     let _ = write_header(writer, file_line);
