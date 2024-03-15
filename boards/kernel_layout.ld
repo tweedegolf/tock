@@ -196,7 +196,7 @@ SECTIONS
      * Align on PAGE_SIZE number of bytes. Volumes within this region are
      * allocated with the storage_volume! macro in utils.rs.
      */
-    .storage :
+    /* .storage :
     {
       . = ALIGN(PAGE_SIZE);
       _sstorage = .;
@@ -204,7 +204,7 @@ SECTIONS
       _estorage = .;
       . = ALIGN(PAGE_SIZE);
     } > rom
-    . = ALIGN(PAGE_SIZE);
+    . = ALIGN(PAGE_SIZE); */
 
     /* Mark the end of static elements */
     . = ALIGN(4);

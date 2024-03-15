@@ -73,13 +73,14 @@
 #![cfg_attr(not(doc), no_main)]
 #![deny(missing_docs)]
 
-use capsules_core::virtualizers::virtual_alarm::{VirtualMuxAlarm, MuxAlarm};
+use capsules_core::virtualizers::virtual_alarm::{MuxAlarm, VirtualMuxAlarm};
 use capsules_core::virtualizers::virtual_uart::UartDevice;
 use capsules_extra::net::ieee802154::MacAddress;
 use capsules_extra::net::ipv6::ip_utils::IPAddr;
+use cortexm4::nvic::Nvic;
 use kernel::component::Component;
 use kernel::hil::led::LedLow;
-use kernel::hil::time::{Counter, AlarmClient, Alarm};
+use kernel::hil::time::{Alarm, AlarmClient, Counter, Ticks};
 use kernel::hil::uart::Configure;
 #[allow(unused_imports)]
 use kernel::hil::usb::Client;
@@ -268,6 +269,12 @@ pub unsafe fn start() -> (
     // Apply errata fixes and enable interrupts.
     nrf52840::init();
 
+    use nrf52840::clock::{Clock, LowClockSource};
+    let clock = Clock::new();
+    clock.low_set_source(LowClockSource::RC);
+    clock.low_start();
+    while !clock.low_started() {}
+
     // Set up peripheral drivers. Called in separate function to reduce stack
     // usage.
     let ieee802154_ack_buf = static_init!(
@@ -317,31 +324,44 @@ pub unsafe fn start() -> (
     //--------------------------------------------------------------------------
 
     let rtc = &base_peripherals.rtc;
-    let _ = rtc.start();
+    let _ = rtc.start().unwrap();
+
+    Nvic::new(11).enable();
 
     base_peripherals.uarte0.initialize(
-	nrf52840::pinmux::Pinmux::new(Pin::P0_05 as u32),
-	nrf52840::pinmux::Pinmux::new(Pin::P0_06 as u32),
-	Some(nrf52840::pinmux::Pinmux::new(Pin::P0_07 as u32)),
-	Some(nrf52840::pinmux::Pinmux::new(Pin::P0_08 as u32)),
+        nrf52840::pinmux::Pinmux::new(Pin::P0_06 as u32),
+        nrf52840::pinmux::Pinmux::new(Pin::P0_08 as u32),
+        Some(nrf52840::pinmux::Pinmux::new(Pin::P0_07 as u32)),
+        Some(nrf52840::pinmux::Pinmux::new(Pin::P0_05 as u32)),
     );
 
-    base_peripherals.uarte0.configure(kernel::hil::uart::Parameters {
-	baud_rate: 115200,
-	width: kernel::hil::uart::Width::Eight,
-	stop_bits: kernel::hil::uart::StopBits::One,
-	parity: kernel::hil::uart::Parity::None,
-	hw_flow_control: false,
-    });
+    base_peripherals
+        .uarte0
+        .configure(kernel::hil::uart::Parameters {
+            baud_rate: 115200,
+            width: kernel::hil::uart::Width::Eight,
+            stop_bits: kernel::hil::uart::StopBits::One,
+            parity: kernel::hil::uart::Parity::None,
+            hw_flow_control: false,
+        });
 
-    let hello_buffer = static_init!([u8; 11], [b'H', b'e', b'l', b'l', b'o', b' ', b'W', b'o' , b'r', b'l' , b'd']);
-    let hello = static_init!(hello_world::HelloWorld<'static, Rtc<'static>, nrf52840::uart::Uarte<'static>>, hello_world::HelloWorld::new(
-	&base_peripherals.rtc,
-	&base_peripherals.uarte0,
-	hello_buffer,
-    ));
+    let hello_buffer = static_init!(
+        [u8; 11],
+        [b'H', b'e', b'l', b'l', b'o', b' ', b'W', b'o', b'r', b'l', b'd']
+    );
+    let hello_buffer2 = static_init!(
+        [u8; 11],
+        [b'W', b'e', b'l', b'l', b'o', b' ', b'H', b'o', b'r', b'l', b'd']
+    );
+    let hello = static_init!(
+        hello_world::HelloWorld<'static, Rtc<'static>, nrf52840::uart::Uarte<'static>>,
+        hello_world::HelloWorld::new(
+            &base_peripherals.rtc,
+            &base_peripherals.uarte0,
+            hello_buffer,
+        )
+    );
     hello.start();
-
 
     //--------------------------------------------------------------------------
     // TESTS
@@ -452,6 +472,18 @@ pub unsafe fn start() -> (
         debug!("{:?}", err);
     });
 
+    // hello.transmit_now(hello_buffer2);
+
+    // for _ in 0..10000000 {
+    //     core::hint::black_box(core::arch::asm!("NOP"));
+    // }
+
+    // use kernel::hil::time::Time;
+    // let now = rtc.now().into_u32();
+    // let buffer = static_init!([u8; 4], [0xAA; 4]);
+    // buffer.copy_from_slice(&now.to_be_bytes());
+    // hello.transmit_now(buffer);
+
     (board_kernel, platform, chip)
 }
 
@@ -469,57 +501,65 @@ pub unsafe fn main() {
     );
 }
 
-
 mod hello_world {
     use core::cell::Cell;
 
-    use kernel::hil::{time::{Alarm, AlarmClient, Frequency, Ticks}, uart::{UartData, TransmitClient}};
+    use kernel::hil::{
+        time::{Alarm, AlarmClient, Frequency, Ticks},
+        uart::{TransmitClient, UartData},
+    };
 
     enum State {
-	Transmitting,
-	Waiting(&'static mut [u8]),
+        Transmitting,
+        Waiting(&'static mut [u8]),
     }
 
     pub struct HelloWorld<'a, A: Alarm<'a>, U: UartData<'a>> {
-	alarm: &'a A,
-	uart: &'a U,
-	state: Cell<State>,
+        alarm: &'a A,
+        uart: &'a U,
+        state: Cell<State>,
     }
 
-
     impl<'a, A: Alarm<'a>, U: UartData<'a>> HelloWorld<'a, A, U> {
-	pub fn new(alarm: &'a A, uart: &'a U, buffer: &'static mut [u8]) -> Self {
-	    HelloWorld {
-		alarm,
-		uart,
-		state: Cell::new(State::Waiting(buffer)),
-	    }
-	}
+        pub fn new(alarm: &'a A, uart: &'a U, buffer: &'static mut [u8]) -> Self {
+            HelloWorld {
+                alarm,
+                uart,
+                state: Cell::new(State::Waiting(buffer)),
+            }
+        }
 
-	pub fn start(&'a self) {
-	    self.alarm.set_alarm_client(self);
-	    self.uart.set_transmit_client(self);
+        pub fn transmit_now(&self, buffer: &'static mut [u8]) {
+            self.uart.transmit_buffer(buffer, buffer.len());
+        }
 
-	    let now = self.alarm.now();
-	    let dst = now.wrapping_add(<A::Ticks>::from_or_max(<A::Frequency>::frequency() as u64));
-	    self.alarm.set_alarm(now, dst);
-	}
+        pub fn start(&'a self) {
+            use kernel::hil::time::ConvertTicks;
+
+            self.alarm.set_alarm_client(self);
+            self.uart.set_transmit_client(self);
+
+            let now = self.alarm.now();
+            self.alarm.set_alarm(now, self.alarm.ticks_from_ms(1000));
+        }
     }
 
     impl<'a, A: Alarm<'a>, U: UartData<'a>> AlarmClient for HelloWorld<'a, A, U> {
         fn alarm(&self) {
-	    match self.state.replace(State::Transmitting) {
-		State::Transmitting => {
-		    // Shouldn't happen, but just ignore
-		},
-		State::Waiting(buffer) => {
-		    self.uart.transmit_buffer(buffer, buffer.len());
+            match self.state.replace(State::Transmitting) {
+                State::Transmitting => {
+                    // Shouldn't happen, but just ignore
+                }
+                State::Waiting(buffer) => {
+                    self.uart.transmit_buffer(buffer, buffer.len());
 
-		    let now = self.alarm.now();
-		    let dst = now.wrapping_add(<A::Ticks>::from_or_max(<A::Frequency>::frequency() as u64));
-		    self.alarm.set_alarm(now, dst);
-		}
-	    }
+                    let now = self.alarm.now();
+                    self.alarm.set_alarm(
+                        now,
+                        <A::Ticks>::from_or_max(<A::Frequency>::frequency() as u64),
+                    );
+                }
+            }
         }
     }
 
@@ -530,8 +570,6 @@ mod hello_world {
             tx_len: usize,
             rval: Result<(), kernel::ErrorCode>,
         ) {
-
         }
     }
-
 }
