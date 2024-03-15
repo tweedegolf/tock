@@ -1229,7 +1229,8 @@ impl<C: Chip> Process for ProcessStandard<'_, C> {
     }
 
     fn print_full_process(&self, writer: &mut dyn Write) {
-        if !config::CONFIG.debug_panics {
+        // Disable the printing to save bytes! The precious bytes!
+        if true || !config::CONFIG.debug_panics {
             return;
         }
 
