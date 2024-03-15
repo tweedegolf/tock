@@ -80,6 +80,7 @@ use capsules_extra::net::ipv6::ip_utils::IPAddr;
 use kernel::component::Component;
 use kernel::hil::led::LedLow;
 use kernel::hil::time::{Counter, AlarmClient, Alarm};
+use kernel::hil::uart::Configure;
 #[allow(unused_imports)]
 use kernel::hil::usb::Client;
 use kernel::platform::{KernelResources, SyscallDriverLookup};
@@ -290,26 +291,6 @@ pub unsafe fn start() -> (
         Some(&nrf52840_peripherals.gpio_port[LED3_PIN]),
     );
 
-    // Choose the channel for serial output. This board can be configured to use
-    // either the Segger RTT channel or via UART with traditional TX/RX GPIO
-    // pins.
-    let uart_channel = if USB_DEBUGGING {
-        // Initialize early so any panic beyond this point can use the RTT
-        // memory object.
-        let mut rtt_memory_refs = components::segger_rtt::SeggerRttMemoryComponent::new()
-            .finalize(components::segger_rtt_memory_component_static!());
-
-        // XXX: This is inherently unsafe as it aliases the mutable reference to
-        // rtt_memory. This aliases reference is only used inside a panic
-        // handler, which should be OK, but maybe we should use a const
-        // reference to rtt_memory and leverage interior mutability instead.
-        self::io::set_rtt_memory(&*rtt_memory_refs.get_rtt_memory_ptr());
-
-        UartChannel::Rtt(rtt_memory_refs)
-    } else {
-        UartChannel::Pins(UartPins::new(UART_RTS, UART_TXD, UART_CTS, UART_RXD))
-    };
-
     // Setup space to store the core kernel data structure.
     let board_kernel = static_init!(kernel::Kernel, kernel::Kernel::new(&PROCESSES));
 
@@ -337,31 +318,26 @@ pub unsafe fn start() -> (
 
     let rtc = &base_peripherals.rtc;
     let _ = rtc.start();
-    let mux_alarm = components::alarm::AlarmMuxComponent::new(rtc)
-        .finalize(components::alarm_mux_component_static!(nrf52840::rtc::Rtc));
 
-    let uart_channel = nrf52_components::UartChannelComponent::new(
-        uart_channel,
-        mux_alarm,
-        &base_peripherals.uarte0,
-    )
-    .finalize(nrf52_components::uart_channel_component_static!(
-        nrf52840::rtc::Rtc
-    ));
+    base_peripherals.uarte0.initialize(
+	nrf52840::pinmux::Pinmux::new(Pin::P0_05 as u32),
+	nrf52840::pinmux::Pinmux::new(Pin::P0_06 as u32),
+	Some(nrf52840::pinmux::Pinmux::new(Pin::P0_07 as u32)),
+	Some(nrf52840::pinmux::Pinmux::new(Pin::P0_08 as u32)),
+    );
 
-    let uart_mux = components::console::UartMuxComponent::new(uart_channel, 115200)
-        .finalize(components::uart_mux_component_static!());
-
-    let hello_uart = static_init!(UartDevice, UartDevice::new(uart_mux, false));
-    hello_uart.setup();
-
-    let hello_alarm = static_init!(VirtualMuxAlarm<Rtc<'static>>, VirtualMuxAlarm::new(mux_alarm));
-    hello_alarm.setup();
+    base_peripherals.uarte0.configure(kernel::hil::uart::Parameters {
+	baud_rate: 115200,
+	width: kernel::hil::uart::Width::Eight,
+	stop_bits: kernel::hil::uart::StopBits::One,
+	parity: kernel::hil::uart::Parity::None,
+	hw_flow_control: false,
+    });
 
     let hello_buffer = static_init!([u8; 11], [b'H', b'e', b'l', b'l', b'o', b' ', b'W', b'o' , b'r', b'l' , b'd']);
-    let hello = static_init!(hello_world::HelloWorld<'static, VirtualMuxAlarm<Rtc<'static>>, UartDevice>, hello_world::HelloWorld::new(
-	hello_alarm,
-	hello_uart,
+    let hello = static_init!(hello_world::HelloWorld<'static, Rtc<'static>, nrf52840::uart::Uarte<'static>>, hello_world::HelloWorld::new(
+	&base_peripherals.rtc,
+	&base_peripherals.uarte0,
 	hello_buffer,
     ));
     hello.start();
