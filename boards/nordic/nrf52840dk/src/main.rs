@@ -200,6 +200,12 @@ type Ieee802154Driver = components::ieee802154::Ieee802154ComponentType<
 
 /// Supported drivers by the platform
 pub struct Platform {
+    led: &'static capsules_core::led::LedDriver<
+        'static,
+        kernel::hil::led::LedLow<'static, nrf52840::gpio::GPIOPin<'static>>,
+        4,
+    >,
+    alarm: &'static AlarmDriver,
     scheduler: &'static RoundRobinSched<'static>,
     systick: cortexm4::systick::SysTick,
 }
@@ -210,6 +216,8 @@ impl SyscallDriverLookup for Platform {
         F: FnOnce(Option<&dyn kernel::syscall::SyscallDriver>) -> R,
     {
         match driver_num {
+            capsules_core::led::DRIVER_NUM => f(Some(self.led)),
+            capsules_core::alarm::DRIVER_NUM => f(Some(self.alarm)),
             _ => f(None),
         }
     }
@@ -325,8 +333,14 @@ pub unsafe fn start() -> (
 
     let rtc = &base_peripherals.rtc;
     let _ = rtc.start().unwrap();
-
-    Nvic::new(11).enable();
+    let mux_alarm = components::alarm::AlarmMuxComponent::new(rtc)
+        .finalize(components::alarm_mux_component_static!(nrf52840::rtc::Rtc));
+    let alarm = components::alarm::AlarmDriverComponent::new(
+        board_kernel,
+        capsules_core::alarm::DRIVER_NUM,
+        mux_alarm,
+    )
+    .finalize(components::alarm_component_static!(nrf52840::rtc::Rtc));
 
     base_peripherals.uarte0.initialize(
         nrf52840::pinmux::Pinmux::new(Pin::P0_06 as u32),
@@ -349,19 +363,14 @@ pub unsafe fn start() -> (
         [u8; 11],
         [b'H', b'e', b'l', b'l', b'o', b' ', b'W', b'o', b'r', b'l', b'd']
     );
-    let hello_buffer2 = static_init!(
-        [u8; 11],
-        [b'W', b'e', b'l', b'l', b'o', b' ', b'H', b'o', b'r', b'l', b'd']
-    );
-    let hello = static_init!(
-        hello_world::HelloWorld<'static, Rtc<'static>, nrf52840::uart::Uarte<'static>>,
-        hello_world::HelloWorld::new(
-            &base_peripherals.rtc,
-            &base_peripherals.uarte0,
-            hello_buffer,
-        )
-    );
-    hello.start();
+
+    let led = components::led::LedsComponent::new().finalize(components::led_component_static!(
+        LedLow<'static, nrf52840::gpio::GPIOPin>,
+        LedLow::new(&nrf52840_peripherals.gpio_port[LED1_PIN]),
+        LedLow::new(&nrf52840_peripherals.gpio_port[LED2_PIN]),
+        LedLow::new(&nrf52840_peripherals.gpio_port[LED3_PIN]),
+        LedLow::new(&nrf52840_peripherals.gpio_port[LED4_PIN]),
+    ));
 
     //--------------------------------------------------------------------------
     // TESTS
@@ -427,6 +436,8 @@ pub unsafe fn start() -> (
         .finalize(components::round_robin_component_static!(NUM_PROCS));
 
     let platform = Platform {
+        led,
+        alarm,
         scheduler,
         systick: cortexm4::systick::SysTick::new_with_calibration(64000000),
     };
@@ -499,77 +510,4 @@ pub unsafe fn main() {
         None::<&kernel::ipc::IPC<{ NUM_PROCS as u8 }>>,
         &main_loop_capability,
     );
-}
-
-mod hello_world {
-    use core::cell::Cell;
-
-    use kernel::hil::{
-        time::{Alarm, AlarmClient, Frequency, Ticks},
-        uart::{TransmitClient, UartData},
-    };
-
-    enum State {
-        Transmitting,
-        Waiting(&'static mut [u8]),
-    }
-
-    pub struct HelloWorld<'a, A: Alarm<'a>, U: UartData<'a>> {
-        alarm: &'a A,
-        uart: &'a U,
-        state: Cell<State>,
-    }
-
-    impl<'a, A: Alarm<'a>, U: UartData<'a>> HelloWorld<'a, A, U> {
-        pub fn new(alarm: &'a A, uart: &'a U, buffer: &'static mut [u8]) -> Self {
-            HelloWorld {
-                alarm,
-                uart,
-                state: Cell::new(State::Waiting(buffer)),
-            }
-        }
-
-        pub fn transmit_now(&self, buffer: &'static mut [u8]) {
-            self.uart.transmit_buffer(buffer, buffer.len());
-        }
-
-        pub fn start(&'a self) {
-            use kernel::hil::time::ConvertTicks;
-
-            self.alarm.set_alarm_client(self);
-            self.uart.set_transmit_client(self);
-
-            let now = self.alarm.now();
-            self.alarm.set_alarm(now, self.alarm.ticks_from_ms(1000));
-        }
-    }
-
-    impl<'a, A: Alarm<'a>, U: UartData<'a>> AlarmClient for HelloWorld<'a, A, U> {
-        fn alarm(&self) {
-            match self.state.replace(State::Transmitting) {
-                State::Transmitting => {
-                    // Shouldn't happen, but just ignore
-                }
-                State::Waiting(buffer) => {
-                    self.uart.transmit_buffer(buffer, buffer.len());
-
-                    let now = self.alarm.now();
-                    self.alarm.set_alarm(
-                        now,
-                        <A::Ticks>::from_or_max(<A::Frequency>::frequency() as u64),
-                    );
-                }
-            }
-        }
-    }
-
-    impl<'a, A: Alarm<'a>, U: UartData<'a>> TransmitClient for HelloWorld<'a, A, U> {
-        fn transmitted_buffer(
-            &self,
-            tx_buffer: &'static mut [u8],
-            tx_len: usize,
-            rval: Result<(), kernel::ErrorCode>,
-        ) {
-        }
-    }
 }
