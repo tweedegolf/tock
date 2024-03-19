@@ -131,7 +131,10 @@ impl<T: Copy> queue::Queue<T> for RingBuffer<'_, T> {
                 // When the predicate is true, move the current element to the
                 // destination if needed, and increment the destination index.
                 if src != dst {
-                    self.ring[dst] = self.ring[src];
+                    // Instead of assigning the values directly, we do a copy and swap to make the compiler
+                    // stop generating a memmove. A memmove costs 300 byte-ish.
+                    let mut val = self.ring[src];
+                    core::mem::swap(&mut val, &mut self.ring[dst])
                 }
                 dst = (dst + 1) % len;
             }

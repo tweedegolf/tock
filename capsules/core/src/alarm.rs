@@ -82,10 +82,10 @@ impl<'a, A: Alarm<'a>> AlarmDriver<'a, A> {
                     let current_dt_ticks = A::Ticks::from(current_dt);
                     let current_end_ticks = current_reference_ticks.wrapping_add(current_dt_ticks);
 
-                    earliest_alarm = match earliest_alarm {
+                    match earliest_alarm {
                         Expiration::Disabled => {
                             earliest_end = current_end_ticks;
-                            alarm.expiration
+                            earliest_alarm = alarm.expiration;
                         }
                         Expiration::Enabled { reference, dt } => {
                             // There are two cases when current might be
@@ -114,14 +114,14 @@ impl<'a, A: Alarm<'a>> AlarmDriver<'a, A> {
                                 .within_range(temp_earliest_reference, temp_earliest_end)
                             {
                                 earliest_end = current_end_ticks;
-                                alarm.expiration
+                                earliest_alarm = alarm.expiration;
                             } else if !now_lower_bits
                                 .within_range(temp_earliest_reference, temp_earliest_end)
                             {
                                 earliest_end = temp_earliest_end;
-                                alarm.expiration
+                                earliest_alarm = alarm.expiration;
                             } else {
-                                earliest_alarm
+                                earliest_alarm = earliest_alarm;
                             }
                         }
                     }
